@@ -46,92 +46,264 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Rahul Venna rrv534
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+Initially one of the data sets described the Date column as Month so I renamed it to fit the same ID in the last chunk. The S%P data set contains 1768 unique ID's while the Natural Gas price data set contains 284 unique ID's.Since the common ID was Date and both of them were strings there was no change in the form of the data. Furthermore, I utilized an inner join so it returns only if the rows in the left table have matching keys in the right table. Since the date was now modified to be the same ID on both it returned a table containing 11 columns and 256 rows. This differs from the 2 seperate original data sets in which the S&P data set had 1768 rows with 10 columns and the Natural gas price data set had 284 rows with 2 columns. This means that 38 observations were dropped from the Natural gas data set and 1512 were dropped from the S%P data set. There were a lot of data points dropped from the S%P data set mainly because the S%P data started at a much earlier date(1887-1997). We used inner join because we didn't need S%P data that didn't have matching Gas price data as that is the variable we are trying to look deeper into as compared to the S%P data which describes the market.
+
+Other joins were used to see what data was left out and which data ID's were kept in and to confirm that the dropped ID's were from the earlier years(1887-1997) because they don't appear on the natural gas price data set.
 
 ```{R}
+library(tidytext)
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
+NaturalGasPrice <- read_csv("NaturalGasPriceMonth.csv")
+SPdata <- read_csv("SPdata.csv")
+SPdata <- SPdata %>% mutate_at("Date", str_replace, "-\\d\\d$", "")
+library(tidyverse)
+library(tidytext)
+library(tidyverse)
+NaturalGasPrice <- rename(NaturalGasPrice, Date = Month)
+FNaturalGasPrice <- NaturalGasPrice %>% pivot_wider(names_from = "Date", values_from = "Price")
+NGasvSP <- NaturalGasPrice %>% inner_join(SPdata,NaturalGasPrice, by="Date")
+NGasvSP <- NGasvSP %>% arrange(Date)
+NGasvSP <- NGasvSP %>% mutate(GasPriceDetector = ifelse(Price > 10, "Expensive", ifelse(Price <= 10 & 5 <= Price, "Fair", "Cheap")))
 
-# if your dataset needs tidying, do so here
+NGasvSP %>% group_by(GasPriceDetector) %>%
+            select(-Dividend, -PE10, -`Real Earnings`, -`Real Dividend`, -`Real Price`, -'Consumer Price Index',-Earnings) %>% arrange(desc(Price))
 
-# any other code here
+NGasvSP %>% filter(GasPriceDetector == 'Expensive') %>% summarize(Date,SP500)
+NGasvSP %>% filter(GasPriceDetector == 'Fair') %>% summarize(Date,SP500 )
+NGasvSP %>% filter(GasPriceDetector == 'Cheap') %>% summarize(Date,SP500 )
+NGasvSP <- NGasvSP %>% mutate(interest = ifelse(`Long Interest Rate` > 4, "High", ifelse(`Long Interest Rate` <= 4 & 2 <= `Long Interest Rate`, "Medium", "Low")))
+NGasvSP %>% filter(interest == 'High') %>% summarize(Date,SP500, `Long Interest Rate`) %>% arrange(desc(`Long Interest Rate`))
+NGasvSP %>% filter(interest == 'Medium') %>% summarize(Date,SP500,  `Long Interest Rate`)
+NGasvSP %>% filter(interest == 'Low') %>% summarize(Date,SP500, `Long Interest Rate`)
+NGasvSP <- NGasvSP %>% drop_na()
+
+
+NGasvSP <- NGasvSP %>% group_by(`Long Interest Rate`) %>% mutate(LIR = ifelse(`Long Interest Rate` >= 4, "1", ifelse(`Long Interest Rate` < 4 , "0")))
+NGasvSP$LIR <- as.numeric(NGasvSP$LIR)
+
+
+
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+clus <- NGasvSP %>% select(Price, `Long Interest Rate`, PE10)%>% ungroup()
+
+sil_width <- vector()
+for(i in 2:10) {
+  kms <- kmeans(clus, centers = i)
+  sil <- silhouette(kms$cluster, dist(clus))
+  sil_width[i] <- mean(sil[,3])
+}
+ggplot()+geom_line(aes(x=1:10,y=sil_width))+scale_x_continuous(name="k",breaks=1:10)
+
+SPGpam = clus %>% pam(k =2)
+SPGpam
+
+library(GGally)
+clus %>% mutate(cluster = as.factor(SPGpam$clustering)) %>% ggpairs(cols= 1:6, aes(color=cluster)) 
+
+SPGpam$silinfo$avg.width
+
 ```
 
-Discussion of clustering here
+The variables chosen for clustering and the PAM analysis were the Price, the Dividend, and the PE10. In thw real world, the price is often described as the Gas price which serves as an indicator to how consumer staple prices are at the time. The long interest rate is what the government sets the interest rate at which affects bond prices, the market, and many more features. Because higher interest rates mean higher borrowing costs, people will eventually start spending less. Finally the PE10 describes the price to earnings ratio. It related its current price to its earnings to share. If it is very high this indicates that the price is actually very high compared to what it is valuated in terms of earnings. So in this example, we can see various correlations.  Since the values are all numbers were are using an Euclidian and also 2 clusters as k = 2. As can be seen above, the red cluster data is much higher than the blue in terms of price, but not Long Interest Rate or PE. This could indicate that high gas prices occured at times wehre there were high interest rates and less consumer spending and thus a lower PE ratio as companies were valued lower in deflationary times. Long interest rate and price to earnings ratio have a decent correlation. There isn't too much overlap between the variables except for in the situation of gas price and price to earnings ratio which is an interesting correlation that can be further studied. There is a SPGpam analysis width of .589 which is a decent structure as it is above .5. 
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+PCANums <- NGasvSP %>% select(Price, `Long Interest Rate`, PE10)
+pca1 <- princomp(PCANums, cor = T)
+summary(pca1, loadings = "T")
+
+cmatrix <- pca1$scores 
+cmatrix <- cmatrix %>% as.data.frame() %>% mutate(`Long Interest Rate` = PCANums$`Long Interest Rate`)
+ggplot(cmatrix, aes(Comp.1, Comp.2)) + geom_point(aes(color = `Long Interest Rate`))
+
+cor(PCANums$`Long Interest Rate`, cmatrix$Comp.1)
+cor(PCANums$`Long Interest Rate`, cmatrix$Comp.2)
+cor(PCANums$`Long Interest Rate`, cmatrix$Comp.3)
 ```
 
-Discussions of PCA here. 
+As can be seen, the highest variance is found with PC2 which has a .912 cumulative proportion. This means that this is the comp that should have the most attention. We kept the first 2 PC's as they hit that .912 cumulative proportions. The PCs are basically a way for a way to compare both the signs and magnitude allowing to discuss how one variable affects each other. So in an a real example. PC2 or the general is positively correlated with the other variables meaning that the higher or lower that value is it correlates with the rest in terms of both sign(positive or negative) and magnitude. So a higher value in PC2 would indicate a high value in the other variables. As PC2 is the comp we are looking at that is the comp that we study the correlation on. AS can be seen, it is the only one with a. positive correlation. of .381, while PC1 and PC3 have -.86 and-.33 respectively. This indicates that in PC1 and PC3 there is a negative correlation between Long interest rate and PC1 and PC3.
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+
+logistic_fit <- glm(LIR ~ Price + Dividend + PE10 + `Real Earnings` + `Real Dividend` + `Real Price` + `Consumer Price Index` + Earnings, data=NGasvSP, family="binomial")
+prob_reg <- predict(logistic_fit)
+class_diag(prob_reg, NGasvSP$LIR, positive = "1")
+table(truth = NGasvSP$LIR, predictions = prob_reg > .5) %>% addmargins
+
+##table(actual=NGasvSP$LIR, predicted = probs) %>% addmargins
+
+k=10
+
+data<-sample_frac(NGasvSP) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+# create training and test sets
+train<-data[folds!=i,] 
+test<-data[folds==i,] 
+truth<-test$LIR
+
+# train model
+fit <- glm(LIR ~ Price + Dividend + PE10 + `Real Earnings` + `Real Dividend` + `Real Price` + `Consumer Price Index` + Earnings, data=NGasvSP, family="binomial")
+
+# test model
+probs <- predict(fit, newdata = test, type = "response")
+
+# get performance metrics for each fold
+diags<-rbind(diags,class_diag(probs,truth, positive = "1")) }
+
+#average performance metrics across all folds
+summarize_all(diags,mean)
 ```
+
 
 ```{R}
-# cross-validation of linear classifier here
+k=10
+
+data<-sample_frac(NGasvSP) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+# create training and test sets
+train<-data[folds!=i,] 
+test<-data[folds==i,] 
+truth<-test$LIR
+
+# train model
+fit <- glm(LIR ~ Price + Dividend + PE10 + `Real Earnings` + `Real Dividend` + `Real Price` + `Consumer Price Index` + Earnings, data=NGasvSP, family="binomial")
+
+# test model
+probs <- predict(fit, newdata = test)
+
+# get performance metrics for each fold
+diags<-rbind(diags,class_diag(probs,truth, positive = "1")) }
+
+#average performance metrics across all folds
+summarize_all(diags,mean)
 ```
 
-Discussion here
+I chose to use logistic regression as my linear classfiier and predicted the value of LIR which is essentially the Long interest rate and whether it is above 4 or not. This binary variable is to be predicted by the all of the other numeric variables in the data set. The model was trained and got a value of .9943 for the AUC indicating that the model is doing great. A confusion matrix is also put into place to see how many of the actual true samples were predicted to be true and how many false were actually false. This is the true positive rate which is approximately .952.  Furthermore a k-fold cross vertification is used on this model. After running class diag we got out of sample performance averaged across k folds. As per CV AUC there is an even higher AUC of .996 indicating that the model is performing as intended and can predict the value of LIR very accurately. There seem to be no signs of overfitting and the model is performing exceptionally.
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+
+knn_train <- knn3(NGasvSP$LIR ~ NGasvSP$Price + NGasvSP$Dividend + NGasvSP$PE10 + NGasvSP$`Real Earnings` + NGasvSP$`Real Dividend` + NGasvSP$`Real Price` + NGasvSP$`Consumer Price Index` + NGasvSP$Earnings, data=NGasvSP)
+
+KNNProbs <- predict(knn_train, NGasvSP)[,2]
+class_diag(KNNProbs, NGasvSP$LIR, positive = "1")
+table(truth = NGasvSP$LIR, predictions = KNNProbs > .5 ) %>% addmargins
+
 ```
 
 ```{R}
-# cross-validation of np classifier here
+k=10
+
+data<-sample_frac(NGasvSP) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+# create training and test sets
+train<-data[folds!=i,] 
+test<-data[folds==i,] 
+truth<-test$LIR
+
+# train model
+knn_train <- knn3(NGasvSP$LIR ~ NGasvSP$Price + NGasvSP$Dividend + NGasvSP$PE10 + NGasvSP$`Real Earnings` + NGasvSP$`Real Dividend` + NGasvSP$`Real Price` + NGasvSP$`Consumer Price Index` + NGasvSP$Earnings, data=NGasvSP)
+
+# test model
+probs <- predict(fit, newdata = test)
+
+# get performance metrics for each fold
+diags<-rbind(diags,class_diag(probs,truth, positive = "1")) }
+
+#average performance metrics across all folds
+summarize_all(diags,mean)
 ```
-
-Discussion
-
-
+ I used a non-parametric classifier, k-nearest-neighbors, to the same data set for the linear classifier totrain the model once again using a different classifier. Then using the class diag function I got an AUC value that determines how well the model fits the data. From this, it is clear that there is an AUC of .994 which is a strong value suggesting the model does indeed fit the data and predict it properly. FUrthermore, a confusion matrix was run to determine how many of the predicted values were actually correct which gives us the TPR. Since 124/125 was this ratio, it gives a .992 value which is very high. Finally, a k-fold cross verification was run to get an out of sample performance averaged across k-folds.This would allow us to see how well the model works outside of the data set. With this, we get a CV AUC which is .996 which shows very little signs of over fitting. This value is actually higher than the .994.
+ 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+Linreg <- lm(NGasvSP$LIR ~ NGasvSP$Price + NGasvSP$Dividend + NGasvSP$PE10 + NGasvSP$`Real Earnings` + NGasvSP$`Real Dividend` + NGasvSP$`Real Price` + NGasvSP$`Consumer Price Index` + NGasvSP$Earnings, data=NGasvSP)
+
+Linprobs <- predict(Linreg)
+mean((NGasvSP$LIR - Linprobs)^2)
 ```
 
 ```{R}
-# cross-validation of regression model here
-```
+k=10
 
-Discussion
+data<-sample_frac(NGasvSP) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+# create training and test sets
+train<-data[folds!=i,] 
+test<-data[folds==i,] 
+truth<-test$LIR
+
+# train model
+Linreg <- lm(NGasvSP$LIR ~ NGasvSP$Price + NGasvSP$Dividend + NGasvSP$PE10 + NGasvSP$`Real Earnings` + NGasvSP$`Real Dividend` + NGasvSP$`Real Price` + NGasvSP$`Consumer Price Index` + NGasvSP$Earnings, data=NGasvSP)
+
+# test model
+probs <- predict(fit, newdata = test)
+
+# get performance metrics for each fold
+diags<- mean((test$LIR - probs)^2) }
+
+#average performance metrics across all folds
+mean(diags)
+```
+I fit a linear regression model for the entire data set and predicted the value of LIR, a binary variable, from my other numeric variables in my data set. From this linear model, I calculated the MSE, which is the mean squared error. This tells us how close the line is to the points by taking distances of the points from the regression line. The squaring allows for us to get rid of the negative values. The MSE was .04 which is excellent suggesting very small error. On the other hand, using the k-fold CV value of the MSE across testing folds, it is 249.98 indictating a lot more error when predicting values outside of the data set. 
 
 ### Python 
 
 ```{R}
 library(reticulate)
+use_python("usr/bin/python3")
+moneyman = "Rahooligan"
 ```
 
 ```{python}
-# python code here
+moneyman = "Is Rich"
+print(r.moneyman, moneyman)
+2 + 2
 ```
-
-Discussion
+```{R}
+cat(c(moneyman, py$moneyman))
+```
+Reticulate essentially allows for python and R to communicate and share a common environment. As can be seen first I defined moneyman as Rahooligan in R. Then in python i defined another variable also named moneyman as "Is rich", then i combined them by pulling the R version of moneyman with "R." and then printed out pytons version of moneyman to create Rahooligan is Rich. However, to pull python variables into an R code chunk, i just simply used "py$". This way I demonstrated the use of python variables in R code and R variables in python.
 
 ### Concluding Remarks
 
-Include concluding remarks here, if any
+This class was very interesting and I got a lot out of it. I am happy I was able to get to take this class my senior year and it really created a new skill set for me. I wish I had more time here to learn python!
 
 
 
